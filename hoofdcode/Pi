@@ -1,0 +1,74 @@
+# Raspberry Pi als i2c-slave
+# Make the following connections.
+# GPIO 18 (pen 12) <--- SDA ---> D20 Mega (A4 Uno)
+# GPIO 19 (pen 35) <--- SCL ---> D21 Mega (A5 Uno)
+import time
+import pigpio
+I2C_ADDR = 9
+def i2c(id, tick):
+ global pi
+ s, b, d = pi.bsc_i2c(I2C_ADDR)
+ if b:
+ if d[0] == ord('t'): # 116 send 'HH:MM:SS*'
+ print("sent={} FR={} received={} [{}]".format(s>>16, s&0xfff,b,d))
+ s, b, d = pi.bsc_i2c(I2C_ADDR,"{}*".format(time.asctime()[11:19]))
+ print("sent={} FR={} received={} [{}]".format(s>>16, s&0xfff,b,d))
+ elif d[0] == ord('d'): # 100 send 'Sun Oct 30*'
+ print("sent={} FR={} received={} [{}]".format(s>>16, s&0xfff,b,d))
+ s, b, d = pi.bsc_i2c(I2C_ADDR,"{}*".format(time.asctime()[:10]))
+ print("sent={} FR={} received={} [{}]".format(s>>16, s&0xfff,b,d))
+pi = pigpio.pi()
+if not pi.connected:
+ exit()
+# Respond to BSC slave activity
+e = pi.event_callback(pigpio.EVENT_BSC, i2c)
+pi.bsc_i2c(I2C_ADDR) # Configure BSC as I2C slave
+time.sleep(600)
+e.cancel()
+pi.bsc_i2c(0) # Disable BSC peripheral
+pi.stop()
+// Arduino als i2c-master
+//
+// Make the following connections:
+//
+// GPIO 18 (pen 12) <--- SDA ---> D20 Mega (A4 Uno)
+// GPIO 19 (pen 35) <--- SCL ---> D21 Mega (A5 Uno)
+//
+// You should also add pull-up resistors of 4k7 or so on each of
+// GPIO 18 and 19 to 3V3. The software sets the internal pull-ups
+// which may work reliably enough.
+#include <Wire.h>
+void setup()
+{
+ Wire.begin(); // join i2c bus (address optional for master)
+ Serial.begin(115200); // start serial for output
+}
+void loop()
+{
+ Wire.beginTransmission(9); // transmit to device #9
+ Wire.write("datum"); // sends one byte
+ Wire.endTransmission(); // stop transmitting
+ delay(15); // Maak deze niet te klein! Maar geen delay gebruiken.
+ Wire.requestFrom(9, 11); // request 11 bytes from slave device #9
+ while(Wire.available()) // slave may send less than requested
+ {
+ char c = Wire.read(); // receive a byte as character
+ Serial.print(c); // print the character
+ }
+ Serial.println();
+// Serial.print("\t");
+// delay(500);
+// Wire.beginTransmission(9); // transmit to device #9
+// Wire.write("datum gevraagd"); // sends five bytes
+// Wire.endTransmission(); // stop transmitting
+// delay(500);
+//
+// Wire.requestFrom(9, 11); // request 11 bytes from slave device #9
+// while(Wire.available()) // slave may send less than requested
+// {
+// char c = Wire.read(); // receive a byte as character
+// Serial.print(c); // print the character
+// }
+// Serial.println();
+// delay(500);
+ whi
