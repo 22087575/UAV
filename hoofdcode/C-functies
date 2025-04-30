@@ -1,0 +1,25 @@
+#include <stdio.h>
+typedef struct Metingen{
+ int waarde1;
+ int waarde2;
+ int waarde3;
+} Meting;
+Meting doeMeting()
+{
+ Meting meting;
+ // zo maar wat waarden
+ meting.waarde1 = 100;
+ meting.waarde2 = 222;
+ meting.waarde3 = 345;
+
+ return meting;
+}
+void toonresultaat(Meting metinkjes)
+{
+ printf("%d %d %d\n", metinkjes.waarde1, metinkjes.waarde2, metinkjes.waarde3);
+}
+int main()
+{
+ Meting myMeting = doeMeting();
+ toonresultaat(myMeting);
+ return
