@@ -39,19 +39,19 @@ void setup() {
   delay(10);  // wacht 10ms
   ToF1.init();  // initialiseer ToF1
   ToF1.setAddress(0x30); // geef ToF1 het adres 0x30
-  ToF1.setMeasurementTimingBudget(600000);  // 200 ms per meting
+  ToF1.setMeasurementTimingBudget(600000);  // 600 ms per meting
 
   digitalWrite(XSHUT2, HIGH); // zet xshut2 hoog
   delay(10);  // wacht 10ms
   ToF2.init();  // initialiseer ToF2
   ToF2.setAddress(0x31); // geef ToF2 het adres 0x31
-  ToF2.setMeasurementTimingBudget(600000);  // 200 ms per meting
+  ToF2.setMeasurementTimingBudget(600000);  // 600 ms per meting
 
   digitalWrite(XSHUT3, HIGH); // zet xshut3 hoog
   delay(10);  // wacht 10ms
   ToF3.init();  // initialiseer ToF3
   ToF3.setAddress(0x32); // geef ToF3 adres 0x32
-  ToF3.setMeasurementTimingBudget(600000);  // 200 ms per meting
+  ToF3.setMeasurementTimingBudget(600000);  // 600 ms per meting
 
 }
 
