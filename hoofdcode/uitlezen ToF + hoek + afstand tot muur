@@ -1,0 +1,102 @@
+#include <Wire.h>
+#include <VL53L0X.h>
+
+const int testled = 7;
+
+const int ConstanteAfstand = 28.3;  // Constante afstand tussen twee ToF-sensoren
+const int CorrectieToF1 = 18.7; // negatief
+const int CorrectieToF2 = 11.4; // negatief
+const int CorrectieToF3 = 56.6; // positief
+
+const int XSHUT1 = 2; // pinnummer voor xshut van ToF1
+const int XSHUT2 = 3; // pinnummer voor xshut van ToF2
+const int XSHUT3 = 4; // pinnummer voor xshut van ToF3
+
+VL53L0X ToF1;  // maak een object van VL53L0X en noem deze ToF1
+VL53L0X ToF2;  // maak een object van VL53L0X en noem deze ToF2
+VL53L0X ToF3;  // maak een object van VL53L0X en noem deze ToF3
+
+void TestSetUp(){
+  pinMode(testled, OUTPUT);
+  digitalWrite(testled, HIGH);
+}
+
+// setup
+void setup() {
+
+  TestSetUp();
+
+  Serial.begin(9600); // stel de baudrate in op 9600
+  Wire.begin(); // schakel de I2C aan
+
+  pinMode(XSHUT1, OUTPUT);  // maak van de xshut een output
+  pinMode(XSHUT2, OUTPUT);  // maak van de xshut een output
+  pinMode(XSHUT3, OUTPUT);  // maak van de xshut een output 
+
+  digitalWrite(XSHUT1, LOW);  // zet de xshut laag
+  digitalWrite(XSHUT2, LOW);  // zet de xshut laag
+  digitalWrite(XSHUT3, LOW);  // zet de xshut laag
+  delay(10);  // wacht 10ms
+
+  digitalWrite(XSHUT1, HIGH); // zet xshut1 hoog
+  delay(10);  // wacht 10ms
+  ToF1.init();  // initialiseer ToF1
+  ToF1.setAddress(0x30); // geef ToF1 het adres 0x30
+  ToF1.setMeasurementTimingBudget(600000);  // 200 ms per meting
+
+  digitalWrite(XSHUT2, HIGH); // zet xshut2 hoog
+  delay(10);  // wacht 10ms
+  ToF2.init();  // initialiseer ToF2
+  ToF2.setAddress(0x31); // geef ToF2 het adres 0x31
+  ToF2.setMeasurementTimingBudget(600000);  // 200 ms per meting
+
+  digitalWrite(XSHUT3, HIGH); // zet xshut3 hoog
+  delay(10);  // wacht 10ms
+  ToF3.init();  // initialiseer ToF3
+  ToF3.setAddress(0x32); // geef ToF3 adres 0x32
+  //ToF3.setMeasurementTimingBudget(1000);  // 200 ms per meting
+
+}
+
+// Functie om hoek te berekenen
+float BerekenHoek(float D1, float D2, float d){
+  float verschil = D2 - D1; // bereken het verschil tussen afstand ToF1 tot de wand en afstand ToF2 tot de wand
+  float Theta = (verschil / d); // bereken thetá
+  Theta = (180 * Theta) / PI;  // omzetten naar graden
+  Theta = Theta / 3.0;  // schaal terug met factor 3
+  return Theta ; // geef thetá terug
+}
+
+void loop() {
+
+  float afstand1 = ToF1.readRangeSingleMillimeters() - CorrectieToF1; // lees ToF1 uit met als eenheid mm
+  float afstand2 = ToF2.readRangeSingleMillimeters() - CorrectieToF2; // lees ToF2 uit met als eenheid mm
+  float afstand3 = ToF3.readRangeSingleMillimeters() + CorrectieToF3; // lees ToF3 uit met als eenheid mm
+
+  // print de afstanden
+  Serial.print("Sensor 1: ");
+  Serial.print(afstand1);
+  Serial.print(" mm\t");
+
+  Serial.print("Sensor 2: ");
+  Serial.print(afstand2);
+  Serial.print(" mm\t");
+
+  Serial.print("Sensor 3: ");
+  Serial.print(afstand3);
+  Serial.println(" mm");
+
+  float hoek = BerekenHoek(afstand1, afstand2, ConstanteAfstand); // hoek is de teruggeven waarde van BerekenHoek functie
+  // print de hoek tussen ToF1 en ToF2
+  Serial.print("Hoek: ");
+  Serial.println(hoek);
+
+  if(afstand3 <= 80){
+    digitalWrite(testled, LOW);
+  }
+  else{
+    digitalWrite(testled, HIGH);
+  }
+
+  delay(10);
+}
