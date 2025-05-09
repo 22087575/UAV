@@ -1,0 +1,75 @@
+#include <Wire.h>
+#include <Arduino.h>
+
+#define MPU_ADDR 0x68
+#define GYRO_SCALE 65.5  // 65.5 Voor ±500 °/s bereik 131.0 voor 250 bereik
+
+// Offsetvariabelen
+long offsetZ = 0;
+const int samples = 250;
+
+// Tijd en meetinterval
+unsigned long previousMillis = 0;
+const long interval = 2; // ms
+float angleZ = 0.0; // geïntegreerde hoek in graden
+
+void setup() {
+  Wire.begin();
+  Serial.begin(9600);
+
+  // Wake up MPU
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x6B);  // Power management
+  Wire.write(0x00);
+  Wire.endTransmission(true);
+
+  // Stel gyroscoop bereik in op ±500 °/s (0x08 in register 0x1B)
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x1B);  // Gyro config register
+  Wire.write(0x08);  // oxo8 voor ±500 °/s 0x00 voor 250 graden
+  Wire.endTransmission(true);
+
+  calculateOffsets();  // Bepaal gyroscoopoffset
+}
+
+void calculateOffsets() {
+  Serial.println("Berekenen van offsets...");
+  for (int i = 0; i < samples; i++) {
+    Wire.beginTransmission(MPU_ADDR);
+    Wire.write(0x43); // Startadres gyroscoopdata
+    Wire.endTransmission(false);
+    Wire.requestFrom(MPU_ADDR, 6, true);
+
+    Wire.read(); Wire.read(); // negeer X
+    Wire.read(); Wire.read(); // negeer Y
+    offsetZ += (Wire.read() << 8 | Wire.read()); // alleen Z
+    delay(5);
+  }
+  offsetZ /= samples;
+  Serial.print("Offset Z: "); Serial.println(offsetZ);
+}
+
+void loop() {
+  unsigned long currentMillis = micros();
+  if (currentMillis - previousMillis >= interval) {
+    float dt = (currentMillis - previousMillis) / 1000000.0;
+    previousMillis = currentMillis;
+
+
+    // Lees gyro Z-as
+    Wire.beginTransmission(MPU_ADDR);
+    Wire.write(0x43);
+    Wire.endTransmission(false);
+    Wire.requestFrom(MPU_ADDR, 6, true);
+
+    Wire.read(); Wire.read(); // negeer X
+    Wire.read(); Wire.read(); // negeer Y
+    int16_t gyroZ = (Wire.read() << 8 | Wire.read()) - offsetZ;
+
+    float gyroZ_dps = gyroZ / GYRO_SCALE;
+    angleZ += gyroZ_dps * dt;
+
+    Serial.print("Angle Z (deg): ");
+    Serial.println(angleZ);
+  }
+}
