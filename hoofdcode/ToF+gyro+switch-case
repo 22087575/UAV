@@ -1,0 +1,258 @@
+/*
+libraries
+*/
+  #include <Wire.h>
+  #include <VL53L0X.h>
+
+/*
+defines
+*/
+  #define MPU_ADDR 0x68
+  #define GYRO_SCALE 65.5  // 65.5 Voor ±500 °/s bereik 131.0 voor 250 bereik
+
+  long offsetZ = 0;
+  const int samples = 250;
+
+  unsigned long previousMillis = 0;
+  const long interval = 2; // ms
+  float angleZ = 0.0; // geïntegreerde hoek in graden
+
+/*
+instellen van pinnummers
+*/ 
+  const int programmerPin1 = 0;
+  const int programmerPin2 = 1;
+  const int diepOntlading = 2;
+  const int relaisFans = 3;
+  const int relaisStepdownConverters = 4;
+  const int motorzijkantPWM = 5;
+  const int motorZijkantHoogLaag = 6;
+  const int motorZijkantLaagHoog = 7;
+  const int motorLinksPWM1 = 8;
+  const int motorLinksPWM2 = 9;
+  const int motorRechtsPWM1 = 10;
+  const int motorRecthsPWM2 = 11;
+  const int serieleCommunicatie1 = 18;
+  const int serieleCommunicatie2 = 19;
+  const int sda = 20;
+  const int scl = 21;
+  const int segment1 = 22;
+  const int segment2 = 23;
+  const int segment3 = 24;
+  const int segment4 = 25;
+  const int segment5 = 26;
+  const int segment6 = 27;
+  const int segment7 = 28;
+  const int segment8 = 29;
+  const int segment9 = 30;
+  const int segment10 =31;
+  const int XSHUT1 = 47;
+  const int XSHUT2 = 48;
+  const int XSHUT3 = 49;
+  const int DO = 50;
+  const int DI = 51;
+  const int CLK = 52;
+  const int CS = 53;
+  const int stroomSensor = A0;
+
+/*
+Aanmaken van objecten
+*/
+  VL53L0X ToF1;  // maak een object van VL53L0X en noem deze ToF1
+  VL53L0X ToF2;  // maak een object van VL53L0X en noem deze ToF2
+  VL53L0X ToF3;  // maak een object van VL53L0X en noem deze ToF3
+/* 
+
+setup voor ToF-sensoren
+*/
+void setupToF(){
+
+  pinMode(XSHUT1, OUTPUT);  // maak van de xshut een output
+  pinMode(XSHUT2, OUTPUT);  // maak van de xshut een output
+  pinMode(XSHUT3, OUTPUT);  // maak van de xshut een output 
+
+  digitalWrite(XSHUT1, LOW);  // zet de xshut laag
+  digitalWrite(XSHUT2, LOW);  // zet de xshut laag
+  digitalWrite(XSHUT3, LOW);  // zet de xshut laag
+  delay(10);  // wacht 10ms
+
+  digitalWrite(XSHUT1, HIGH); // zet xshut1 hoog
+  delay(10);
+  ToF1.init();  // initialiseer ToF1
+  ToF1.setAddress(0x30);
+  ToF1.setMeasurementTimingBudget(600000);  // 600 ms per meting
+
+  digitalWrite(XSHUT2, HIGH); // zet xshut2 hoog
+  delay(10);  // wacht 10ms
+  ToF2.init();  // initialiseer ToF2
+  ToF2.setAddress(0x31); // geef ToF2 het adres 0x31
+  ToF2.setMeasurementTimingBudget(600000);  // 600 ms per meting
+
+  digitalWrite(XSHUT3, HIGH); // zet xshut3 hoog
+  delay(10);  // wacht 10ms
+  ToF3.init();  // initialiseer ToF3
+  ToF3.setAddress(0x32); // geef ToF3 adres 0x32
+  ToF3.setMeasurementTimingBudget(1000);  // 200 ms per meting
+
+  ToF1.startContinuous(1000);
+  ToF2.startContinuous(1000);
+  ToF3.startContinuous(1000);
+} // einde setup ToF
+
+// setup
+void setup() {
+
+  Serial.begin(9600); // stel de baudrate in op 9600
+  Wire.begin(); // schakel de I2C aan
+
+  setupToF(); // roep de ToF-setup aan
+
+  // Wake up MPU
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x6B);  // Power management
+  Wire.write(0x00);
+  Wire.endTransmission(true);
+
+    // Stel gyroscoop bereik in op ±500 °/s (0x08 in register 0x1B)
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x1B);  // Gyro config register
+  Wire.write(0x08);  // oxo8 voor ±500 °/s 0x00 voor 250 graden
+  Wire.endTransmission(true);
+
+  calculateOffsets();  // Bepaal gyroscoopoffset
+
+} // einde main setup
+
+/*
+functie om ToF sensoren uit te lezen
+*/
+void UitlezenToF(){
+
+  const int ConstanteAfstand = 235;  // Constante afstand tussen twee ToF-sensoren
+  const int CorrectieToF1 = 18.7; // negatief
+  const int CorrectieToF2 = 28.7; // negatief
+  const int CorrectieToF3 = 56.6; // positief
+
+  float afstand1 = ToF1.readRangeContinuousMillimeters() - CorrectieToF1; // lees ToF3 uit met als eenheid mm
+  float afstand2 = ToF2.readRangeContinuousMillimeters() - CorrectieToF2; // lees ToF3 uit met als eenheid mm
+  float afstand3 = ToF3.readRangeContinuousMillimeters() + CorrectieToF3; // lees ToF3 uit met als eenheid mm
+
+  // print de afstanden
+  Serial.print("Sensor 1: ");
+  Serial.print(afstand1);
+  Serial.print(" mm\t");
+
+  Serial.print("Sensor 2: ");
+  Serial.print(afstand2);
+  Serial.print(" mm\t");
+
+  Serial.print("Sensor 3: ");
+  Serial.print(afstand3);
+  Serial.println(" mm");
+
+  float hoek = BerekenHoek(afstand1, afstand2, ConstanteAfstand); // hoek is de teruggeven waarde van BerekenHoek functie
+  // print de hoek tussen ToF1 en ToF2
+  Serial.print("Hoek: ");
+  Serial.println(hoek);
+} // einde uitlezen ToF
+
+/*
+Functie om hoek te berekenen met ToF sensoren
+*/
+float BerekenHoek(float D1, float D2, float d){
+  float verschil = D2 - D1; // bereken het verschil tussen afstand ToF1 tot de wand en afstand ToF2 tot de wand
+  float Theta = (verschil / d); // bereken thetá
+  Theta = (180 * Theta) / PI;  // omzetten naar graden
+  return Theta ; // geef thetá terug
+} // einde berekenen hoek ToF
+
+/*
+berekenen van offsets van gyroscoop
+*/
+void calculateOffsets() {
+
+  Serial.println("Berekenen van offsets...");
+  for (int i = 0; i < samples; i++) {
+    Wire.beginTransmission(MPU_ADDR);
+    Wire.write(0x43); // Startadres gyroscoopdata
+    Wire.endTransmission(false);
+    Wire.requestFrom(MPU_ADDR, 6, true);
+
+    Wire.read(); Wire.read(); // negeer X
+    Wire.read(); Wire.read(); // negeer Y
+    offsetZ += (Wire.read() << 8 | Wire.read()); // alleen Z
+    delay(5);
+  }
+  offsetZ /= samples;
+  Serial.print("Offset Z: "); Serial.println(offsetZ);
+} // einde berekenen offests gyro
+
+/*
+uitlezen van gyroscoop
+*/
+void lezenGyro(){
+    unsigned long currentMillis = micros();
+    if (currentMillis - previousMillis >= interval) {
+      float dt = (currentMillis - previousMillis) / 1000000.0;
+      previousMillis = currentMillis;
+
+      // Lees gyro Z-as
+      Wire.beginTransmission(MPU_ADDR);
+      Wire.write(0x43);
+      Wire.endTransmission(false);
+      Wire.requestFrom(MPU_ADDR, 6, true);
+
+      Wire.read(); Wire.read(); // negeer X
+      Wire.read(); Wire.read(); // negeer Y
+      int16_t gyroZ = (Wire.read() << 8 | Wire.read()) - offsetZ;
+
+      float gyroZ_dps = gyroZ / GYRO_SCALE;
+      angleZ += gyroZ_dps * dt;
+
+      Serial.print("Angle Z (deg): ");
+      Serial.println(angleZ);
+    }
+} // einde lezen gyro
+
+/*
+void loop, blijft herhaald worden
+*/
+void loop() {
+
+  static int startSensoren = 0; // zet de start standaard op 0
+  static bool Geprint = false;  // zet Geprint standaard op false
+
+  String input = Serial.readStringUntil('\n');  // lees tot enter
+  if(input == "stop" ){ startSensoren = 0; Geprint = false; } // zet alle sensoren uit
+  if(input == "ToF"  ){ startSensoren = 1; Geprint = false; } // zet alleen ToF-sensoren aan
+  if(input == "gyro" ){ startSensoren = 2; Geprint = false; } // zet alleen gyroscoop aan
+  if(input == "beide"){ startSensoren = 3; Geprint = false; } // zet ToF-sensoren en gyroscoop aan
+  
+  switch(startSensoren){
+
+    case 0:
+    if(!Geprint){
+      Serial.print("sensoren uit");
+      Geprint = true;
+    }
+    break;
+
+    case 1:
+    UitlezenToF();  // roep de functie aan om de ToF sensoren uit te lezen
+    break;
+
+    case 2:
+    lezenGyro();
+    break;
+
+    case 3:
+    UitlezenToF();
+    lezenGyro();
+    break;
+    
+  } // einde switch
+
+} // einde loop
+
+
+
