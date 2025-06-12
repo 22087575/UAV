@@ -1,0 +1,608 @@
+
+// libraries
+  #include <Wire.h>
+  #include <VL53L0X.h>
+  #include <SPI.h>  //log
+  #include <SD.h>   //log
+
+
+// defines
+  #define MPU_ADDR 0x68
+  #define GYRO_SCALE 65.5  // 65.5 Voor ±500 °/s bereik 131.0 voor 250 bereik
+  #define maxBufferSize 4096  // log
+
+
+// globale variabelen
+  long offsetZ = 0;
+  const int samples = 250;
+
+  unsigned long previousMillis = 0;
+  const long interval = 2; // ms
+  float angleZ = 0.0; // geïntegreerde hoek in graden
+
+  int pwm;
+
+
+// instellen van pinnummers
+  const int programmerPin1 = 0;
+  const int programmerPin2 = 1;
+  const int diepOntlading = 2;
+  const int relaisFans = 3;
+  const int relaisStepdownConverters = 4;
+  const int motorzijkantPWM = 5;
+  const int motorZijkantHoogLaag = 6;
+  const int motorZijkantLaagHoog = 7;
+  const int motorLinksPWM1 = 8;
+  const int motorLinksPWM2 = 9;
+  const int motorRechtsPWM1 = 10;
+  const int motorRecthsPWM2 = 11;
+  const int serieleCommunicatie1 = 18;
+  const int serieleCommunicatie2 = 19;
+  const int sda = 20;
+  const int scl = 21;
+  const int segment1 = 22;
+  const int segment2 = 23;
+  const int segment3 = 24;
+  const int segment4 = 25;
+  const int segment5 = 26;
+  const int segment6 = 27;
+  const int segment7 = 28;
+  const int segment8 = 29;
+  const int segment9 = 30;
+  const int segment10 =31;
+  const int XSHUT1 = 47;
+  const int XSHUT2 = 48;
+//  const int XSHUT3 = 49;
+  const int DO = 50;
+  const int DI = 51;
+  const int CLK = 52;
+  const int CS = 53;
+  const int stroomSensor = A0;
+
+
+// PD-regelaar:
+/*
+    Simulatie van plaats x en snelheid v van een massa m en een stuwkracht F
+    Bewegingsvergelijking:
+       m.a = F
+
+    Integratie obv
+       a = dv/dt
+       v = dx/dt
+
+    => dv = a.dt => v_nw - v_oud = a.dt => v_nw = v_oud + a.dt =>
+       v = v + a*dt
+       x = x + v*dt
+
+  setup
+    meet t0
+    of simulatie: gebruik beginwaarden van x en v
+    of realisatie: meet x
+    bereken error
+    error_oud = error
+    bereken F, a mbv regelaar
+    of sim: plot F, x, v, a
+    of rea: stuur motoren aan
+  loop
+    meet t totdat tijd voor nieuwe regelstap is aangebroken (om de 10 ms)
+      of sim: bereken x en v
+      of rea: meet x
+      error_oud = error
+      bereken error
+      bereken F, a mbv regelaar
+      of sim: plot F, x, v, a
+      of rea: stuur motoren aan
+
+  Poolplaatsing s-domein
+  Im(pool) = 2 x Re(pool) geeft Doorschot van 20%. Goed meetbaar!
+  Im(pool) = Re(pool) geeft Doorschot van 4%. Niet goed meetbaar!
+*/
+  bool simulatie = false;
+  const long cyclustijd = 10;      // ms;       Regelaar wordt 100x per seconde ververst.
+  long t_oud, t_nw;                // ms, ms;
+  float dt = 1;                    // s;        Nodig vanwege d_error / dt in de regelaar
+  const float m = 1.42;             // kg;       Massa van de UAV
+  float Fx, Fy, Mz = 0.1;          // N, N, Nm; Stuurkrachten en stuurmoment
+  const float Fmin = -0.1879, Fmax = 0.21; // Maximering van stuwkracht voor meer realistische simulatie
+  float ax, ay, alfa;              // m/s2;     Versnellingen en hoekversnelling
+  float vx    = 0.0, sx    = 0.0;  // m/s, m;   Beginwaarden tbv simulatie
+  float vy    = 0.0, sy    = 0.0;  // m/s, m;   Beginwaarden tbv simulatie
+  float omega = 0.0, theta = 0.0;  // m/s, m;   Beginwaarden tbv simulatie
+  float Kp = 1.08, Kd = 1.08, Ki = 1;    // regelaarparameters PID-regelaar  Kp = 6.75, Kd = 2.7, Ki = 1
+  float error, error_oud, d_error, errorSom; // De errors voor een PID-regelaar
+  const float sp = 0.2;            // Setpoint, nodig om sprongresponsie van 0 naar 1 te simuleren
+
+  const long simulatietijd_in_s = long(10); // s; De simulatietijd is instelbaar
+  const long simulatietijd = simulatietijd_in_s * long(1000); // ms
+  const int pixels = 499;          // aantal weer te geven punten in de Serial plotter
+  int pixel = 0;                   // teller van het aantal reeds weergegeven punten
+  const float tijdPerPixel = simulatietijd / pixels;
+  double tijdVoorNwePixelPlot;
+
+
+// Tof functie voor simulatie
+   float ToF() {
+     float afstand;
+     return (afstand);
+  } // einde functie uitlezen tof voor simulatie
+
+
+// Functie voor aansturen van stuwmotor links  
+  int pwm_links() {
+    const int aL = 300, bL = 100;
+    analogWrite(motorzijkantPWM, constrain(aL * Fx / 2 + bL, 0, 255));
+  } // einde functie voor aansturen van stuwmotor links
+
+
+// functie voor aansturen stuwmotor rechts
+  int pwm_rechts() {
+    const int aR = 302, bR = 105;
+    analogWrite(motorZijkantHoogLaag, constrain(aR * Fx / 2 + bR, 0, 255));
+  } // einde functie voor aansturen stuwmotor rechts
+
+
+// functie aansturen afmeer motor
+  int pwm_midden() {
+    float freq;
+    if (Fx >= 0) {
+      digitalWrite(motorZijkantHoogLaag, HIGH);
+      digitalWrite(motorZijkantLaagHoog, LOW);
+      // Vooruit: freq = 1425.1 * Fy - 38.111
+      freq = 1425.1 * Fx - 38.111;
+    } else {
+      digitalWrite(motorZijkantHoogLaag, LOW);
+      digitalWrite(motorZijkantLaagHoog, HIGH);
+      // Achteruit: freq = -1594.7 * Fy + 44.753
+      freq = -1594.7 * Fx + 44.753;
+    }
+    pwm = constrain(map((int)freq, 0, 255, 0, 255), 0, 255);
+    analogWrite(motorzijkantPWM, pwm);
+  } // einde functie aansturen afmeer motor
+
+
+// functie om aan aansturing van motoren aan te roepen
+  void motoraansturing() {
+    digitalWrite(relaisFans, LOW);
+    digitalWrite(relaisStepdownConverters, HIGH);
+//    pwm_links();     // Bereken en schrijf alle uitgangen
+//    pwm_rechts();
+    pwm_midden();
+  } // einde voor aanroep functie van alle motoren
+
+
+// functie voor plotten van simulatie
+    void plot() {
+    tijdVoorNwePixelPlot = tijdVoorNwePixelPlot + tijdPerPixel;
+    Serial.print(Fx * 10);
+    Serial.print(" ");
+    Serial.print(ax * 10);
+    Serial.print(" ");
+    Serial.print(vx * 10);
+    Serial.print(" ");
+    Serial.println(sx * 10);
+    pixel = pixel + 1;
+  } // einde functie plotten simulatie
+
+
+// functie voor poolplaatsing
+  void Poolplaatsing() {
+    const float Re = 0.4, Im = 0.8, pool3 = 0.5; // Poolplaatsing Im(pool) = 2 x Re(pool): Doorschot = 20%  0.3141592654  0.6283185307
+  //  Berekening PD - parameters adhv de poolplaatsing
+    Kp = (Re * Re + Im * Im) * m;
+    Kd = 2 * Re * m;
+  
+    // Berekening PID-parameters adhv de poolplaatsing
+    //  Kp = (Re * Re + Im * Im + 2 * Re * pool3) * m;
+    //  Kd = (2 * Re + pool3) * m;
+    //  Ki = (Re * Re + Im * Im) * pool3 * m;
+  } // einde functie poolplaatsing
+
+
+// functie PD regelaar
+  void Regelaar() {
+    error_oud = error;
+    error = sp - sx;
+    d_error = error - error_oud;
+    errorSom = errorSom + error * dt;
+    Fx = Kp * error + Kd * d_error / dt; // + Ki * errorSom;
+    constrain(Fx, Fmin, Fmax);
+    ax = Fx / m;     // bereken de versnelling
+  } // einde functie PD-regelaar
+
+
+// data voor loggen
+struct SensorData {
+  long time;
+  float value1;
+  float value2;
+};  // einde struct voor loggen data
+
+// structure voor gelezen data ToF sensoren
+struct ToFdata{
+   float afstand1;
+   float afstand2;
+   float afstand3;
+   float hoek;
+   float dx =30;
+ };  // einde structure voor ToF data
+
+
+// Aanmaken van objecten
+  VL53L0X ToF1;  // maak een object van VL53L0X en noem deze ToF1
+  VL53L0X ToF2;  // maak een object van VL53L0X en noem deze ToF2
+//  VL53L0X ToF3;  // maak een object van VL53L0X en noem deze ToF3
+
+  ToFdata data;
+
+      static const unsigned numElements = maxBufferSize / sizeof(SensorData); // Bereken hoeveel elementen (structs) er weggeschreven kunnen worden in de buffer.
+      static SensorData buffer[numElements];
+      static boolean stopWriting = false;
+      static const long samplingTimeDataLogging = 1000;  // ms, bepaalt frequentie waarmee sensordata wordt weggeschreven.
+      static const long timeStopWriting = 60000;  // ms, bepaalt frequentie waarmee sensordata wordt weggeschreven.
+      static long t_lastDataLog = 0, t_new;  // ms, ms;
+      static int currentIndex = 0;
+      unsigned fileCounter = 0;
+      String filename;
+    
+
+// functie voor data schrijven voor log
+void writeDataToFile(byte *buffer, unsigned bufferSize) {
+  
+  do {
+    filename = "data" + String(fileCounter) + ".bin";
+    fileCounter++;
+  } while (SD.exists(filename)); // Controleer of het bestand al bestaat
+  File dataFile = SD.open(filename, FILE_WRITE);
+  
+  if (dataFile) {
+    Serial.println("Schrijven naar " + filename + "...");
+    // Schrijven van de buffer naar het bestand
+    dataFile.write(buffer, bufferSize);
+    
+    // Sluiten van het bestand
+    dataFile.close();
+    Serial.println("Schrijven naar " + filename + " voltooid");
+  } else {
+    Serial.println("Fout bij het openen van het bestand");
+  }
+} // einde functie data schrijven voor log
+
+
+// functie voor log data oproepen
+void logSensorData() {
+  unsigned long t_new = millis();
+
+  // start loggen als we nog niet gestopt zijn
+  if (!stopWriting && t_new - t_lastDataLog >= samplingTimeDataLogging) {
+    t_lastDataLog = t_new;
+
+    buffer[currentIndex].time = t_new;
+    buffer[currentIndex].value1 = data.dx;
+    buffer[currentIndex].value2 = pwm=0;
+    
+    currentIndex++;
+
+    if (currentIndex >= numElements) {
+      // buffer is vol, schrijven naar SD
+      writeDataToFile((byte*)buffer, sizeof(buffer));
+      currentIndex = 0;
+      stopWriting = false;  // evt resetten om door te loggen, of true zetten om te stoppen
+    }
+  }
+
+  // stoppen met loggen na een bepaalde tijd
+  if (t_new > timeStopWriting) {
+    if (!stopWriting) {
+      // schrijf rest buffer naar SD voordat stoppen
+      writeDataToFile((byte*)buffer, currentIndex * sizeof(SensorData));
+      stopWriting = true;
+      Serial.println("Loggen gestopt");
+    }
+  }
+} // einde functie voor log data oproepen
+
+// setup voor ToF-sensoren
+void setupToF(){
+  pinMode(XSHUT1, OUTPUT);
+  pinMode(XSHUT2, OUTPUT);
+
+  // Zet alle sensors uit
+  digitalWrite(XSHUT1, LOW);
+  digitalWrite(XSHUT2, LOW);
+  delay(10);
+
+  // Activeer alleen de eerste sensor
+  digitalWrite(XSHUT1, HIGH);
+  delay(10);
+  if (!ToF1.init()) {
+    Serial.println("ToF1 init mislukt!");
+  }
+  ToF1.setAddress(0x30);  // Zet nieuw adres voor sensor 1
+
+  // Activeer nu pas de tweede sensor
+  digitalWrite(XSHUT2, HIGH);
+  delay(10);
+  if (!ToF2.init()) {
+    Serial.println("ToF2 init mislukt!");
+  }
+  ToF2.setAddress(0x31);  // Zet nieuw adres voor sensor 2
+
+  ToF1.setMeasurementTimingBudget(300000);
+  ToF2.setMeasurementTimingBudget(300000);
+
+  // Start metingen
+  ToF1.startContinuous();
+  ToF2.startContinuous();
+
+//  digitalWrite(XSHUT3, HIGH); // zet xshut3 hoog
+//  delay(10);  // wacht 10ms
+//  ToF3.init();  // initialiseer ToF3
+//  ToF3.setAddress(0x32); // geef ToF3 adres 0x32
+//  ToF3.setMeasurementTimingBudget(300000);  // 200 ms per meting
+//  ToF3.startContinuous(600);
+} // einde setup ToF
+
+
+// setup
+void setup() {
+
+  Serial.begin(57600); // stel de baudrate in op 9600
+  Wire.begin(); // schakel de I2C aan
+  setupToF(); // roep de ToF-setup aan
+  Poolplaatsing();
+
+// OUTPUT:
+  analogWrite(motorzijkantPWM, 0);
+  
+  pinMode(motorLinksPWM1, OUTPUT);
+  pinMode(motorLinksPWM2, OUTPUT);
+  pinMode(motorRechtsPWM1, OUTPUT);
+  pinMode(motorRecthsPWM2, OUTPUT);
+
+  pinMode(relaisFans, OUTPUT);
+  pinMode(relaisStepdownConverters, OUTPUT);
+
+  pinMode(motorzijkantPWM, OUTPUT);
+  pinMode(motorZijkantHoogLaag, OUTPUT);
+  pinMode(motorZijkantLaagHoog, OUTPUT);
+
+// simulatie setup PD
+  if (simulatie) {
+    Serial.print("F a v x");  // De legenda
+    if (tijdPerPixel < cyclustijd) Serial.println("___XXXXXX____tijdPerPixel.<.cyclustijd____XXXXXX");
+    else Serial.println();
+  }
+  t_oud = millis();
+  if (simulatie) tijdVoorNwePixelPlot = t_oud;
+  if (not simulatie) sx = ToF();
+  error = sp - sx;
+  Poolplaatsing();
+  Regelaar();
+  if (simulatie) plot();
+
+
+// zonder simulatie setup
+  if(!simulatie){
+    // Initialisatie van de SD-kaart
+    if (!SD.begin(CS)) {
+      Serial.println("\nInitialisatie van de SD-kaart mislukt!");
+      return;
+      }
+      Serial.println("\nInitialisatie van de SD-kaart voltooid.");
+    
+     // Wake up MPU
+     Wire.beginTransmission(MPU_ADDR);
+     Wire.write(0x6B);  // Power management
+     Wire.write(0x00);
+     Wire.endTransmission(true);
+    
+     // Stel gyroscoop bereik in op ±500 °/s (0x08 in register 0x1B)
+     Wire.beginTransmission(MPU_ADDR);
+     Wire.write(0x1B);  // Gyro config register
+     Wire.write(0x08);  // oxo8 voor ±500 °/s 0x00 voor 250 graden
+     Wire.endTransmission(true);
+    
+      calculateOffsets();  // Bepaal gyroscoopoffset
+    }
+
+} // einde main setup
+
+
+// functie om ToF sensoren uit te lezen
+void UitlezenToF(){
+    
+  const int ConstanteAfstand = 351.2;  // Constante afstand tussen twee ToF-sensoren (235)
+  const int CorrectieToF1 = 13.7; // negatief 14.5
+  const int CorrectieToF2 = 23.2; // negatief 25.6
+  const int CorrectieToF3 = 16.5; // positief 16.5
+  
+  data.afstand1 = ToF1.readRangeContinuousMillimeters() - CorrectieToF1; // lees ToF1 uit met als eenheid mm
+  data.afstand2 = ToF2.readRangeContinuousMillimeters() - CorrectieToF2; // lees ToF2 uit met als eenheid mm
+//  data.afstand3 = ToF3.readRangeSingleMillimeters() - CorrectieToF3; // lees ToF3 uit met als eenheid mm
+
+  // print de afstanden
+  // Serial.print("Sensor 1: ");
+  Serial.print(data.afstand1);
+  Serial.print(" ");
+  // Serial.print(" mm\t");
+
+  // Serial.print("Sensor 2: ");
+  Serial.print(data.afstand2);
+  Serial.print(" ");
+  // Serial.print(" mm\t");
+
+//  // Serial.print("Sensor 3: ");
+//  Serial.print(data.afstand3);
+//  Serial.print(" ");
+//  // Serial.println(" mm");
+
+  data.hoek = BerekenHoek(data.afstand1, data.afstand2, ConstanteAfstand); // hoek is de teruggeven waarde van BerekenHoek functie
+  // print de hoek tussen ToF1 en ToF2
+  // Serial.print("Hoek: ");
+  Serial.println(data.hoek);
+
+  data.dx = BerekenAfstandAfmeren(data.afstand1, data.afstand2);
+} // einde uitlezen ToF
+
+
+// Functie om hoek te berekenen met ToF sensoren
+float BerekenHoek(float D1, float D2, float d){
+  float verschil = D2 - D1; // bereken het verschil tussen afstand ToF1 tot de wand en afstand ToF2 tot de wand
+  float Theta = (verschil / d); // bereken thetá
+  Theta = (180 * Theta) / PI;  // omzetten naar graden
+  return Theta; // geef thetá terug
+} // einde berekenen hoek ToF
+
+
+// Functie om afstand voor afmeren te berekenen
+float BerekenAfstandAfmeren(float x1, float x2){
+  float dx = (x1 + x2) / 2;
+  return dx;
+} // einde functie BerekenAfstandAfmeren
+
+
+// berekenen van offsets van gyroscoop
+void calculateOffsets() {
+
+  Serial.println("Berekenen van offsets...");
+  for (int i = 0; i < samples; i++) {
+    Wire.beginTransmission(MPU_ADDR);
+    Wire.write(0x43); // Startadres gyroscoopdata
+    Wire.endTransmission(false);
+    Wire.requestFrom(MPU_ADDR, 6, true);
+
+    Wire.read(); Wire.read(); // negeer X
+    Wire.read(); Wire.read(); // negeer Y
+    offsetZ += (Wire.read() << 8 | Wire.read()); // alleen Z
+    delay(5);
+  }
+  offsetZ /= samples;
+  Serial.print("Offset Z: "); Serial.println(offsetZ);
+} // einde berekenen offests gyro
+
+
+// uitlezen van gyroscoop
+void lezenGyro(){
+    unsigned long currentMillis = micros();
+    if (currentMillis - previousMillis >= interval) {
+      float dt = (currentMillis - previousMillis) / 1000000.0;
+      previousMillis = currentMillis;
+
+      // Lees gyro Z-as
+      Wire.beginTransmission(MPU_ADDR);
+      Wire.write(0x43);
+      Wire.endTransmission(false);
+      Wire.requestFrom(MPU_ADDR, 6, true);
+
+      Wire.read(); Wire.read(); // negeer X
+      Wire.read(); Wire.read(); // negeer Y
+      int16_t gyroZ = (Wire.read() << 8 | Wire.read()) - offsetZ;
+
+      float gyroZ_dps = gyroZ / GYRO_SCALE;
+      angleZ += gyroZ_dps * dt;
+
+      Serial.print("Angle Z (deg): ");
+      Serial.println(angleZ);
+    }
+} // einde lezen gyro
+
+
+// void loop, blijft herhaald worden
+void loop() {
+  t_nw = millis();    // Lees de tijd
+  if (t_nw - t_oud > cyclustijd) {
+    dt = (t_nw - t_oud) * 0.001;
+    t_oud = t_nw;
+
+// simulatie
+    if (simulatie) {
+      // SIMULATIEMODE
+      sx = sx + vx * dt; // Bereken x
+      vx = vx + ax * dt; // Bereken v
+      Regelaar();
+
+      if (pixel == pixels) while (true);       // Stop met plotten als buffer vol is
+      if (t_nw > tijdVoorNwePixelPlot) plot(); // Plot enkel op juiste momenten
+    } 
+//    else {
+//      // REËLE MODE: regelaar werkt met sensoren
+//      sx = ToF();  // Meet afstand via sensor
+//      Regelaar();
+//      motoraansturing();
+//    }
+  }
+
+// zonder simulatie
+  if (!simulatie) {
+    // Alleen bij niet-simulatie: States afhandelen via seriële input
+
+    static int startStates = 0;
+    static bool Geprint = false;
+
+    // Verwerking seriële commando's
+    if (Serial.available()) {
+      String input = Serial.readStringUntil('\n');
+      input.trim();
+
+      if (input == "Idle"            ){ startStates =  0; Geprint = false; }
+      if (input == "Afmeren"         ){ startStates =  1; Geprint = false; }
+      if (input == "LangsDeMuurVaren"){ startStates =  2; Geprint = false; }
+      if (input == "STOPPEN"         ){ startStates =  3; Geprint = false; }
+      if (input == "Keren"           ){ startStates =  4; Geprint = false; }
+      if (input == "ArucoVinden"     ){ startStates =  5; Geprint = false; }
+      if (input == "Stoppen"         ){ startStates =  6; Geprint = false; }
+      if (input == "stop"            ){ startStates = 10; Geprint = false; }
+      if (input == "ToF"             ){ startStates = 11; Geprint = false; }
+      if (input == "gyro"            ){ startStates = 12; Geprint = false; }
+      if (input == "beide"           ){ startStates = 13; Geprint = false; }
+      if (input == "test"            ){ startStates = 14; Geprint = false; }
+    }
+
+    // Switch voor states alleen als we NIET simuleren
+    switch (startStates) {
+      case 0: // Idle
+        if (!Geprint) { Serial.println("State: Idle"); Geprint = true; }
+        break;
+      case 1: // Afmeren
+        if (!Geprint) { Serial.println("State: Afmeren"); Geprint = true; }
+        UitlezenToF();
+        Serial.println(Fx);
+        sx=data.dx;
+        Regelaar();
+        motoraansturing();
+        logSensorData();
+        break;
+      case 2: // LangsDeMuurVaren
+        if (!Geprint) { Serial.println("State: LangsDeMuurVaren"); Geprint = true; }
+        //UitlezenToF();
+        logSensorData();
+        break;
+      case 3: // STOPPEN
+        if (!Geprint) { Serial.println("State: STOPPEN"); Geprint = true; }
+        break;
+      case 10: // stop alles
+        if (!Geprint) { Serial.println("Alle sensoren uit."); Geprint = true; }
+        break;
+      case 11: // Alleen ToF
+        if (!Geprint) { Serial.println("ToF actief"); Geprint = true; }
+        UitlezenToF();
+        break;
+      case 12: // Alleen gyroscoop
+        if (!Geprint) { Serial.println("Gyroscoop actief"); Geprint = true; }
+        lezenGyro();
+        break;
+      case 13: // Beide actief
+        if (!Geprint) { Serial.println("ToF + Gyro actief"); Geprint = true; }
+        UitlezenToF();
+        lezenGyro();
+        break;
+      case 14: // Teststate
+        if (!Geprint) { Serial.println("Teststate actief"); Geprint = true; }
+        UitlezenToF();
+        sx = data.dx;
+        Regelaar();
+        motoraansturing();
+        break;
+    }
+  }
+}
