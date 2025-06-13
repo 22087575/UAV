@@ -128,46 +128,57 @@
 
 
 // Functie voor aansturen van stuwmotor links  
-  int pwm_links() {
-    const int aL = 300, bL = 100;
-    analogWrite(motorzijkantPWM, constrain(aL * Fx / 2 + bL, 0, 255));
-  } // einde functie voor aansturen van stuwmotor links
+int pwm_links() {
+  float freq;
+  if (Fx >= 0) {
+    digitalWrite(IN3, HIGH);   // vooruit
+    digitalWrite(IN4, LOW);
+    analogWrite(ENA, constrain(map((int)(644.25 * Fx / 2 + 50.394), 0, 250, 0, 255), 0, 255));
+  } else {
+    digitalWrite(IN3, LOW);    // achteruit
+    digitalWrite(IN4, HIGH);
+    analogWrite(ENA, constrain(map((int)(-697.58 * Fx / 2 + 49.565), 0, 250, 0, 255), 0, 255));
+  }
+}
+// Functie voor aansturen van stuwmotor rechts
+int pwm_rechts() {
+  float freq;
+  if (Fx >= 0) {
+    digitalWrite(IN1, LOW);   // vooruit
+    digitalWrite(IN2, HIGH);
+    analogWrite(ENB, constrain(map((int)(641.83 * Fx / 2 + 53.304), 0, 250, 0, 255), 0, 255));
+  } else {
+    digitalWrite(IN1, HIGH);    // achteruit
+    digitalWrite(IN2, LOW);
+    analogWrite(ENB, constrain(map((int)(-689.03 * Fx / 2 + 53.985), 0, 250, 0, 255), 0, 255));
+  }
+}
+// Functie voor aansturen van stuwmotor midden
+int pwm_midden() {
+  float freq;
+  if (Fy >= 0) {
+    freq = 1425.1 * Fy / 2 - 38.111;
+    analogWrite(IN7, constrain(map((int)freq, 0, 250, 0, 255), 0, 255));
+    digitalWrite(IN9, LOW);
+    digitalWrite(IN8, HIGH); // vooruit
+  } else {
+    freq = -1594.7 * Fy / 2 + 44.753;
+    analogWrite(IN7, constrain(map((int)freq, 0, 250, 0, 255), 0, 255));
+    digitalWrite(IN9, HIGH);
+    digitalWrite(IN8, LOW); // achteruit
+  }
+}
 
+// motoraansturen en relais hoog zetten
+void motoraansturing() {
+  pwm_links();   // stuur motor links aan
+  pwm_rechts();  // stuur motor rechts aan
+  pwm_midden();  // stuur middenmotor aan
+  digitalWrite(IN5, HIGH);      // relais blowers uit
+  digitalWrite(IN6, HIGH);      // relais stuwmotoren uit
+}
+ // einde aanroep motoren
 
-// functie voor aansturen stuwmotor rechts
-  int pwm_rechts() {
-    const int aR = 302, bR = 105;
-    analogWrite(motorZijkantHoogLaag, constrain(aR * Fx / 2 + bR, 0, 255));
-  } // einde functie voor aansturen stuwmotor rechts
-
-
-// functie aansturen afmeer motor
-  int pwm_midden() {
-    float freq;
-    if (Fx >= 0) {
-      digitalWrite(motorZijkantHoogLaag, HIGH);
-      digitalWrite(motorZijkantLaagHoog, LOW);
-      // Vooruit: freq = 1425.1 * Fy - 38.111
-      freq = 1425.1 * Fx - 38.111;
-    } else {
-      digitalWrite(motorZijkantHoogLaag, LOW);
-      digitalWrite(motorZijkantLaagHoog, HIGH);
-      // Achteruit: freq = -1594.7 * Fy + 44.753
-      freq = -1594.7 * Fx + 44.753;
-    }
-    pwm = constrain(map((int)freq, 0, 255, 0, 255), 0, 255);
-    analogWrite(motorzijkantPWM, pwm);
-  } // einde functie aansturen afmeer motor
-
-
-// functie om aan aansturing van motoren aan te roepen
-  void motoraansturing() {
-    digitalWrite(relaisFans, LOW);
-    digitalWrite(relaisStepdownConverters, HIGH);
-//    pwm_links();     // Bereken en schrijf alle uitgangen
-//    pwm_rechts();
-    pwm_midden();
-  } // einde voor aanroep functie van alle motoren
 
 
 // functie voor plotten van simulatie
