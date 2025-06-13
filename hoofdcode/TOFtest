@@ -1,0 +1,92 @@
+#include <Wire.h>
+#include <VL53L0X.h>
+
+const int testled = 7;
+
+const int CorrectieToF1 = 18.7;
+const int CorrectieToF2 = 11.4;
+const int CorrectieToF3 = 12.0;
+
+const int XSHUT1 = 47;
+const int XSHUT2 = 48;
+const int XSHUT3 = 49;
+
+VL53L0X ToF1;
+VL53L0X ToF2;
+VL53L0X ToF3;
+
+void TestSetUp(){
+  pinMode(testled, OUTPUT);
+  digitalWrite(testled, HIGH);
+}
+
+void setup() {
+  TestSetUp();
+
+  Serial.begin(9600);
+  Serial.println("Start setup...");
+  Wire.begin();
+
+  pinMode(XSHUT1, OUTPUT);
+  pinMode(XSHUT2, OUTPUT);
+  pinMode(XSHUT3, OUTPUT);
+
+  // Zet alle sensoren uit
+  digitalWrite(XSHUT1, LOW);
+  digitalWrite(XSHUT2, LOW);
+  digitalWrite(XSHUT3, LOW);
+  delay(100);
+
+  // Zet ToF1 aan en initialiseer
+  digitalWrite(XSHUT1, HIGH);
+  delay(100);
+  if (ToF1.init()) {
+    Serial.println("ToF1 init OK");
+    ToF1.setAddress(0x30);
+    ToF1.setMeasurementTimingBudget(300000);
+  } else {
+    Serial.println("ToF1 init Mislukt!");
+  }
+
+  // Zet ToF2 aan en initialiseer
+  digitalWrite(XSHUT2, HIGH);
+  delay(100);
+  if (ToF2.init()) {
+    Serial.println("ToF2 init OK");
+    ToF2.setAddress(0x31);
+    ToF2.setMeasurementTimingBudget(300000);
+  } else {
+    Serial.println("ToF2 init Mislukt!");
+  }
+
+  // Zet ToF3 aan en initialiseer
+  digitalWrite(XSHUT3, HIGH);
+  delay(100);
+  if (ToF3.init()) {
+    Serial.println("ToF3 init OK");
+    ToF3.setAddress(0x32);
+    ToF3.setMeasurementTimingBudget(300000);
+  } else {
+    Serial.println("ToF3 init Mislukt!");
+  }
+}
+
+void loop() {
+  float afstand1 = ToF1.readRangeSingleMillimeters() - CorrectieToF1;
+  float afstand2 = ToF2.readRangeSingleMillimeters() - CorrectieToF2;
+  float afstand3 = ToF3.readRangeSingleMillimeters() - CorrectieToF3;
+
+  Serial.print("Sensor 1: ");
+  Serial.print(afstand1);
+  Serial.print(" mm\t");
+
+  Serial.print("Sensor 2: ");
+  Serial.print(afstand2);
+  Serial.print(" mm\t");
+
+  Serial.print("Sensor 3: ");
+  Serial.print(afstand3);
+  Serial.println(" mm");
+
+  delay(10);
+}
