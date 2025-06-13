@@ -52,7 +52,7 @@
   const int segment10 =31;
   const int XSHUT1 = 47;
   const int XSHUT2 = 48;
-//  const int XSHUT3 = 49;
+  const int XSHUT3 = 49;
   const int DO = 50;
   const int DI = 51;
   const int CLK = 52;
@@ -120,7 +120,7 @@
   double tijdVoorNwePixelPlot;
 
 
-// Tof functie voor simulatie
+// Tof functie voor simulatieSS
    float ToF() {
      float afstand;
      return (afstand);
@@ -128,57 +128,46 @@
 
 
 // Functie voor aansturen van stuwmotor links  
-int pwm_links() {
-  float freq;
-  if (Fx >= 0) {
-    digitalWrite(IN3, HIGH);   // vooruit
-    digitalWrite(IN4, LOW);
-    analogWrite(ENA, constrain(map((int)(644.25 * Fx / 2 + 50.394), 0, 250, 0, 255), 0, 255));
-  } else {
-    digitalWrite(IN3, LOW);    // achteruit
-    digitalWrite(IN4, HIGH);
-    analogWrite(ENA, constrain(map((int)(-697.58 * Fx / 2 + 49.565), 0, 250, 0, 255), 0, 255));
-  }
-}
-// Functie voor aansturen van stuwmotor rechts
-int pwm_rechts() {
-  float freq;
-  if (Fx >= 0) {
-    digitalWrite(IN1, LOW);   // vooruit
-    digitalWrite(IN2, HIGH);
-    analogWrite(ENB, constrain(map((int)(641.83 * Fx / 2 + 53.304), 0, 250, 0, 255), 0, 255));
-  } else {
-    digitalWrite(IN1, HIGH);    // achteruit
-    digitalWrite(IN2, LOW);
-    analogWrite(ENB, constrain(map((int)(-689.03 * Fx / 2 + 53.985), 0, 250, 0, 255), 0, 255));
-  }
-}
-// Functie voor aansturen van stuwmotor midden
-int pwm_midden() {
-  float freq;
-  if (Fy >= 0) {
-    freq = 1425.1 * Fy / 2 - 38.111;
-    analogWrite(IN7, constrain(map((int)freq, 0, 250, 0, 255), 0, 255));
-    digitalWrite(IN9, LOW);
-    digitalWrite(IN8, HIGH); // vooruit
-  } else {
-    freq = -1594.7 * Fy / 2 + 44.753;
-    analogWrite(IN7, constrain(map((int)freq, 0, 250, 0, 255), 0, 255));
-    digitalWrite(IN9, HIGH);
-    digitalWrite(IN8, LOW); // achteruit
-  }
-}
+  int pwm_links() {
+    const int aL = 300, bL = 100;
+    analogWrite(motorzijkantPWM, constrain(aL * Fx / 2 + bL, 0, 255));
+  } // einde functie voor aansturen van stuwmotor links
 
-// motoraansturen en relais hoog zetten
-void motoraansturing() {
-  pwm_links();   // stuur motor links aan
-  pwm_rechts();  // stuur motor rechts aan
-  pwm_midden();  // stuur middenmotor aan
-  digitalWrite(IN5, HIGH);      // relais blowers uit
-  digitalWrite(IN6, HIGH);      // relais stuwmotoren uit
-}
- // einde aanroep motoren
 
+// functie voor aansturen stuwmotor rechts
+  int pwm_rechts() {
+    const int aR = 302, bR = 105;
+    analogWrite(motorZijkantHoogLaag, constrain(aR * Fx / 2 + bR, 0, 255));
+  } // einde functie voor aansturen stuwmotor rechts
+
+
+// functie aansturen afmeer motor
+  int pwm_midden() {
+    float freq;
+    if (Fx >= 0) {
+      digitalWrite(motorZijkantHoogLaag, HIGH);
+      digitalWrite(motorZijkantLaagHoog, LOW);
+      // Vooruit: freq = 1425.1 * Fy - 38.111
+      freq = 1425.1 * Fx - 38.111;
+    } else {
+      digitalWrite(motorZijkantHoogLaag, LOW);
+      digitalWrite(motorZijkantLaagHoog, HIGH);
+      // Achteruit: freq = -1594.7 * Fy + 44.753
+      freq = -1594.7 * Fx + 44.753;
+    }
+    pwm = constrain(map((int)freq, 0, 255, 0, 255), 0, 170);
+    analogWrite(motorzijkantPWM, pwm);
+  } // einde functie aansturen afmeer motor
+
+
+// functie om aan aansturing van motoren aan te roepen
+  void motoraansturing() {
+    digitalWrite(relaisFans, LOW);
+    digitalWrite(relaisStepdownConverters, HIGH);
+    pwm_links();     // Bereken en schrijf alle uitgangen
+    pwm_rechts();
+    pwm_midden();
+  } // einde voor aanroep functie van alle motoren
 
 
 // functie voor plotten van simulatie
@@ -198,14 +187,10 @@ void motoraansturing() {
 // functie voor poolplaatsing
   void Poolplaatsing() {
     const float Re = 0.4, Im = 0.8, pool3 = 0.5; // Poolplaatsing Im(pool) = 2 x Re(pool): Doorschot = 20%  0.3141592654  0.6283185307
-  //  Berekening PD - parameters adhv de poolplaatsing
+    //  Berekening PD - parameters adhv de poolplaatsing
     Kp = (Re * Re + Im * Im) * m;
     Kd = 2 * Re * m;
   
-    // Berekening PID-parameters adhv de poolplaatsing
-    //  Kp = (Re * Re + Im * Im + 2 * Re * pool3) * m;
-    //  Kd = (2 * Re + pool3) * m;
-    //  Ki = (Re * Re + Im * Im) * pool3 * m;
   } // einde functie poolplaatsing
 
 
@@ -234,14 +219,14 @@ struct ToFdata{
    float afstand2;
    float afstand3;
    float hoek;
-   float dx =30;
+   float dx;
  };  // einde structure voor ToF data
 
 
 // Aanmaken van objecten
   VL53L0X ToF1;  // maak een object van VL53L0X en noem deze ToF1
   VL53L0X ToF2;  // maak een object van VL53L0X en noem deze ToF2
-//  VL53L0X ToF3;  // maak een object van VL53L0X en noem deze ToF3
+  VL53L0X ToF3;  // maak een object van VL53L0X en noem deze ToF3
 
   ToFdata data;
 
@@ -255,7 +240,6 @@ struct ToFdata{
       unsigned fileCounter = 0;
       String filename;
     
-
 // functie voor data schrijven voor log
 void writeDataToFile(byte *buffer, unsigned bufferSize) {
   
@@ -316,41 +300,47 @@ void logSensorData() {
 void setupToF(){
   pinMode(XSHUT1, OUTPUT);
   pinMode(XSHUT2, OUTPUT);
+  pinMode(XSHUT3, OUTPUT);
 
   // Zet alle sensors uit
   digitalWrite(XSHUT1, LOW);
   digitalWrite(XSHUT2, LOW);
-  delay(10);
+  digitalWrite(XSHUT3, LOW);
+  delay(100);
 
-  // Activeer alleen de eerste sensor
+  // Zet ToF1 aan en initialiseer
   digitalWrite(XSHUT1, HIGH);
-  delay(10);
-  if (!ToF1.init()) {
-    Serial.println("ToF1 init mislukt!");
+  delay(100);
+  if (ToF1.init()) {
+    Serial.println("ToF1 init OK");
+    ToF1.setAddress(0x30);
+    ToF1.setMeasurementTimingBudget(300000);
+  } else {
+    Serial.println("ToF1 init Mislukt!");
   }
-  ToF1.setAddress(0x30);  // Zet nieuw adres voor sensor 1
 
-  // Activeer nu pas de tweede sensor
+  // Zet ToF2 aan en initialiseer
   digitalWrite(XSHUT2, HIGH);
-  delay(10);
-  if (!ToF2.init()) {
-    Serial.println("ToF2 init mislukt!");
+  delay(100);
+  if (ToF2.init()) {
+    Serial.println("ToF2 init OK");
+    ToF2.setAddress(0x31);
+    ToF2.setMeasurementTimingBudget(300000);
+  } else {
+    Serial.println("ToF2 init Mislukt!");
   }
-  ToF2.setAddress(0x31);  // Zet nieuw adres voor sensor 2
 
-  ToF1.setMeasurementTimingBudget(300000);
-  ToF2.setMeasurementTimingBudget(300000);
+  // Zet ToF3 aan en initialiseer
+  digitalWrite(XSHUT3, HIGH);
+  delay(100);
+  if (ToF3.init()) {
+    Serial.println("ToF3 init OK");
+    ToF3.setAddress(0x32);
+    ToF3.setMeasurementTimingBudget(300000);
+  } else {
+    Serial.println("ToF3 init Mislukt!");
+  }
 
-  // Start metingen
-  ToF1.startContinuous();
-  ToF2.startContinuous();
-
-//  digitalWrite(XSHUT3, HIGH); // zet xshut3 hoog
-//  delay(10);  // wacht 10ms
-//  ToF3.init();  // initialiseer ToF3
-//  ToF3.setAddress(0x32); // geef ToF3 adres 0x32
-//  ToF3.setMeasurementTimingBudget(300000);  // 200 ms per meting
-//  ToF3.startContinuous(600);
 } // einde setup ToF
 
 
@@ -427,9 +417,9 @@ void UitlezenToF(){
   const int CorrectieToF2 = 23.2; // negatief 25.6
   const int CorrectieToF3 = 16.5; // positief 16.5
   
-  data.afstand1 = ToF1.readRangeContinuousMillimeters() - CorrectieToF1; // lees ToF1 uit met als eenheid mm
-  data.afstand2 = ToF2.readRangeContinuousMillimeters() - CorrectieToF2; // lees ToF2 uit met als eenheid mm
-//  data.afstand3 = ToF3.readRangeSingleMillimeters() - CorrectieToF3; // lees ToF3 uit met als eenheid mm
+  data.afstand1 = ToF1.readRangeSingleMillimeters() - CorrectieToF1; // lees ToF1 uit met als eenheid mm
+  data.afstand2 = ToF2.readRangeSingleMillimeters() - CorrectieToF2; // lees ToF2 uit met als eenheid mm
+  data.afstand3 = ToF3.readRangeSingleMillimeters() - CorrectieToF3; // lees ToF3 uit met als eenheid mm
 
   // print de afstanden
   // Serial.print("Sensor 1: ");
@@ -443,8 +433,8 @@ void UitlezenToF(){
   // Serial.print(" mm\t");
 
 //  // Serial.print("Sensor 3: ");
-//  Serial.print(data.afstand3);
-//  Serial.print(" ");
+  Serial.print(data.afstand3);
+  Serial.print(" ");
 //  // Serial.println(" mm");
 
   data.hoek = BerekenHoek(data.afstand1, data.afstand2, ConstanteAfstand); // hoek is de teruggeven waarde van BerekenHoek functie
@@ -535,12 +525,6 @@ void loop() {
       if (pixel == pixels) while (true);       // Stop met plotten als buffer vol is
       if (t_nw > tijdVoorNwePixelPlot) plot(); // Plot enkel op juiste momenten
     } 
-//    else {
-//      // REËLE MODE: regelaar werkt met sensoren
-//      sx = ToF();  // Meet afstand via sensor
-//      Regelaar();
-//      motoraansturing();
-//    }
   }
 
 // zonder simulatie
@@ -585,12 +569,38 @@ void loop() {
         break;
       case 2: // LangsDeMuurVaren
         if (!Geprint) { Serial.println("State: LangsDeMuurVaren"); Geprint = true; }
-        //UitlezenToF();
+        UitlezenToF();
         logSensorData();
         break;
-      case 3: // STOPPEN
+      case 3: // STOPPEN voor de muur
         if (!Geprint) { Serial.println("State: STOPPEN"); Geprint = true; }
         break;
+      case 4: // Keren (90 graden draaien)
+        if (!Geprint) { Serial.println("State: keren"); Geprint = true; }
+        break; 
+      case 5: // ArUco vinden
+        if (!Geprint) { Serial.println("State: ArucoVinden"); Geprint = true; }
+        delay(2000);
+        Serial.println("yes"); // Signal Raspberry Pi to start
+
+        if (Serial.available()) {
+          String data = Serial.readStringUntil('\n');
+          data.trim();
+          if (data == "no_marker") {
+            Serial.println("No marker received.");
+          } 
+          else if (data == "done") {
+            Serial.println("Session complete.");
+          } 
+          else {
+            Serial.print("Received: ");
+            Serial.println(data);  // Data
+            }
+          }      
+        break;
+      case 6: // Stoppen
+        if (!Geprint) { Serial.println("State: Stoppen"); Geprint = true; }
+        break;        
       case 10: // stop alles
         if (!Geprint) { Serial.println("Alle sensoren uit."); Geprint = true; }
         break;
