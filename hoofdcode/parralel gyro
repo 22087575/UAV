@@ -1,0 +1,325 @@
+#include <Wire.h>
+#define MPU_ADDR 0x68
+#define GYRO_SCALE 65.5  // 65.5 voor ±500 °/s bereik
+#define IN1 8    // Motor rechts IN1 (richting)
+#define IN2 9    // Motor rechts IN2 (richting)
+#define ENB 10   // Motor rechts ENB (PWM)
+
+#define IN3 11   // Motor links IN3 (richting)
+#define IN4 12   // Motor links IN4 (richting)
+#define ENA 13   // Motor links ENA (PWM)
+
+#define IN5 3    // Relais blowers
+#define IN6 4    // Relais stuwmotoren
+
+#define IN7 5    // pwmB kleine motor
+#define IN8 6    // Din2 kleine motor
+#define IN9 7    // Din1 kleine motor
+long offsetZ = 0;
+const int gyroSamples = 250;
+unsigned long previousGyroMillis = 0;
+const long gyroInterval = 2; // ms
+float angleZ = 0.0; // geïntegreerde hoek in graden
+
+void calculateOffsets() {
+  offsetZ = 0;
+  Serial.println("Berekenen van offsets...");
+  for (int i = 0; i < gyroSamples; i++) {
+    Wire.beginTransmission(MPU_ADDR);
+    Wire.write(0x43); // Startadres gyroscoopdata
+    Wire.endTransmission(false);
+    Wire.requestFrom(MPU_ADDR, 6, true);
+
+    Wire.read(); Wire.read(); // negeer X
+    Wire.read(); Wire.read(); // negeer Y
+    offsetZ += (Wire.read() << 8 | Wire.read()); // alleen Z
+    delay(5);
+  }
+  offsetZ /= gyroSamples;
+  Serial.print("Offset Z: "); Serial.println(offsetZ);
+}
+
+/*
+    Simulatie van plaats s en snelheid v van een massa m en een stuwkracht F
+    Bewegingsvergelijking:
+       m.a = F
+
+    Integratie obv
+       a = dv/dt
+       v = ds/dt
+
+    => dv = a.dt => v_nw - v_oud = a.dt => v_nw = v_oud + a.dt =>
+       v = v + a*dt
+       s = s + v*dt
+
+  setup
+    meet t0
+    of simulatie: gebruik beginwaarden van s en v
+    of realisatie: meet s
+    bereken error
+    error_oud = error
+    bereken F, a mbv regelaar
+    of sim: plot F, s, v, a
+    of rea: stuur motoren aan
+  loop
+    meet t totdat tijd voor nieuwe regelstap is aangebroken (om de 10 ms)
+      of sim: bereken s en v
+      of rea: meet s
+      error_oud = error
+      bereken error
+      bereken F, a mbv regelaar
+      of sim: plot F, s, v, a
+      of rea: stuur motoren aan
+
+  Poolplaatsing s-domein
+  Im(pool) = 2 x Re(pool) geeft Doorschot van 20%. Goed meetbaar!
+  Im(pool) = Re(pool) geeft Doorschot van 4%. Niet goed meetbaar!
+
+*/
+const bool simulatie = false;
+
+// Motor 2 (rechts)
+const int pwmPenR = 8;      // PWM Motor rechts (IN1)
+const int dirPenR = 9;      // Richting Motor rechts (IN2)
+
+// Motor 1 (links)
+const int pwmPenL = 11;     // PWM Motor links (IN4)
+const int dirPenL = 10;     // Richting Motor links (IN3)
+
+// Middenmotor (kleine motor)
+const int pwmPenM = 5;      // PWM kleine motor (IN7)
+const int dirPenM1 = 7;     // Richting kleine motor (IN9)
+const int dirPenM2 = 6;     // Richting kleine motor (IN8)
+
+// Relais
+const int relaisBlowers = 3;    // IN5
+const int relaisStuwmotoren = 4; // IN6
+
+const long cyclustijd = 10;      // ms;       Regelaar wordt 100x per seconde ververst.
+long t_oud, t_nw;                // ms, ms;
+float dt = 1;                    // s;        Nodig vanwege d_error / dt in de regelaar
+const float m = 1.4;             // kg;       Massa van de UAV
+const float Iz = 0.0296;          // kgm2;     Massatraagheid van de UAV
+float Fx, Fy, Mz = 0.01;         // N, N, Nm; Stuurkrachten en stuurmoment
+const float Mstoor = 0.01;       // Nm;       Stoormoment door helicoptereffect van de blowers
+const float Fmin = -0.32, Fmax = 0.32; // Maximering van stuwkracht voor meer realistische simulatie
+float ax, ay, alfa;              // m/s2;     Versnellingen en hoekversnelling
+float vx    = 0.0, sx    = 0.0;  // m/s, m;   Beginwaarden tbv simulatie
+float vy    = 0.0, sy    = 0.0;  // m/s, m;   Beginwaarden tbv simulatie
+float omega = 0.0, theta = 0.0;  // m/s, m;   Beginwaarden tbv simulatie
+// PID-waarden iets agressiever
+const float Re = 0.4, Im = 0.8, pool3 = 0.4;
+float  Kp = (Re * Re + Im * Im + 2 * Re * pool3) * Iz;
+float  Kd = (2 * Re + pool3) * Iz;
+float  Ki = (Re * Re + Im * Im) * pool3 * Iz;
+
+const float deadzone = 5.0; // graden, pas aan naar wens
+
+float error, error_oud, d_error, errorSom; // De errors voor een PID-regelaar
+const float sp = 1;//1.5708;            // rad;      Setpoint, nodig om sprongresponsie van 0 naar 1 te simuleren
+
+// Zorg dat de plot op Ã©Ã©n pagina past
+const long simulatietijd_in_s = long(10); // s; De simulatietijd is instelbaar
+const long simulatietijd = simulatietijd_in_s * long(1000); // ms
+const int pixels = 499;          // aantal weer te geven punten in de Serial plotter
+int pixel = 0;                   // teller van het aantal reeds weergegeven punten
+const float tijdPerPixel = simulatietijd / pixels;
+double tijdVoorNwePixelPlot;
+
+void gyro() {
+  unsigned long currentMillis = micros();
+  if (currentMillis - previousGyroMillis >= gyroInterval * 1000) {
+    float dt = (currentMillis - previousGyroMillis) / 1000000.0;
+    previousGyroMillis = currentMillis;
+
+    // Lees gyro Z-as
+    Wire.beginTransmission(MPU_ADDR);
+    Wire.write(0x43);
+    Wire.endTransmission(false);
+    Wire.requestFrom(MPU_ADDR, 6, true);
+
+    Wire.read(); Wire.read(); // negeer X
+    Wire.read(); Wire.read(); // negeer Y
+    int16_t gyroZ = (Wire.read() << 8 | Wire.read()) - offsetZ;
+
+    float gyroZ_dps = gyroZ / GYRO_SCALE;
+    angleZ += gyroZ_dps * dt;
+
+    // Zet om naar radialen voor theta
+    theta = -angleZ; // graden
+    Serial.begin(57600);
+    // Print hoek en Mz
+    Serial.print("Angle Z (deg): ");
+    Serial.print(angleZ);
+    Serial.print("   Mz: ");
+    Serial.println(Mz);
+  }
+}
+
+int pwm_links() {
+  float freq;
+  if (Mz >= 0) {
+    digitalWrite(IN3, HIGH);   // vooruit
+    digitalWrite(IN4, LOW);
+    analogWrite(ENA, constrain(map((int)(644.25 * Mz / 2 + 50.394), 0, 250, 0, 255), 0, 255));
+  } else {
+    digitalWrite(IN3, LOW);    // achteruit
+    digitalWrite(IN4, HIGH);
+    analogWrite(ENA, constrain(map((int)(-697.58 * Mz / 2 + 49.565), 0, 250, 0, 255), 0, 255));
+  }
+
+}
+
+int pwm_rechts() {
+  float freq;
+  if (Mz >= 0) {
+    digitalWrite(IN1, LOW);   // vooruit
+    digitalWrite(IN2, HIGH);
+    analogWrite(ENB, constrain(map((int)(641.83 * Mz / 2 + 53.304), 0, 250, 0, 255), 0, 255));
+  } else {
+    digitalWrite(IN1, HIGH);    // achteruit
+    digitalWrite(IN2, LOW);
+    analogWrite(ENB, constrain(map((int)(-689.03 * Mz / 2 + 53.985), 0, 250, 0, 255), 0, 255));
+  }
+}
+
+int pwm_midden() {
+  float freq;
+  if (Mz >= 0) {
+    freq = 1425.1 * Mz / 2 - 38.111;
+    analogWrite(pwmPenM, constrain(map((int)freq, 0, 250, 0, 255), 0, 255));
+    digitalWrite(dirPenM1, HIGH);
+    digitalWrite(dirPenM2, LOW); // vooruit
+  } else {
+    freq = -1594.7 * Mz / 2 + 44.753;
+    analogWrite(pwmPenM, constrain(map((int)freq, 0, 250, 0, 255), 0, 255));
+    digitalWrite(dirPenM1, LOW);
+    digitalWrite(dirPenM2, HIGH+); // achteruit
+  }
+}
+
+void motoraansturing() {
+  pwm_links();   // stuur motor links aan
+  pwm_rechts();  // stuur motor rechts aan
+  // Relais
+  digitalWrite(relaisBlowers, HIGH);      // relais blowers uit
+  digitalWrite(relaisStuwmotoren, HIGH);  // relais stuwmotoren uit
+}
+
+void plot() {
+  tijdVoorNwePixelPlot = tijdVoorNwePixelPlot + tijdPerPixel;
+  Serial.print(Mz * 100);
+  Serial.print(" ");
+  Serial.print(alfa * 1);
+  Serial.print(" ");
+  Serial.print(omega * 1);
+  Serial.print(" ");
+  Serial.println(theta * 1);
+  pixel = pixel + 1;
+}
+
+//void Poolplaatsing() {
+//  const float Re = 0.4, Im = 0.8, pool3 = 1;     // Poolplaatsing Im(pool) = 2 x Re(pool): Doorschot = 20%
+//  // Berekening PD-parameters adhv de poolplaatsing
+//  //  Kp = (Re * Re + Im * Im) * Iz;
+//  //  Kd = 2 * Re * Iz;
+//
+//  // Berekening PID-parameters adhv de poolplaatsing
+//  Kp = (Re * Re + Im * Im + 2 * Re * pool3) * Iz;
+//  Kd = (2 * Re + pool3) * Iz;
+//  Ki = (Re * Re + Im * Im) * pool3 * Iz;
+//}
+
+void Regelaar() {
+  error_oud = error;
+  error = sp - theta;
+
+  // Deadzone toepassen
+  if (abs(error) < deadzone) {
+    error = 0;
+    d_error = 0;
+    errorSom = 0;
+    Mz = 0;
+    alfa = Mstoor / Iz;
+    return;
+  }
+  Serial.print("kp kd ki (polen): ");
+  Serial.print(Kp);
+  Serial.print(Kd);
+  Serial.print(Ki);
+  d_error = error - error_oud;
+  errorSom = errorSom + error * dt;
+  Mz = Kp * error + Kd * d_error / dt + Ki * errorSom;
+  Mz = constrain(Mz, -0.7, 0.7); // Limiteer stuurmoment, pas aan voor jouw systeem
+  alfa = (Mz + Mstoor) / Iz;     // bereken de hoekversnelling
+}
+
+void setup() {
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT);
+  pinMode(IN4, OUTPUT);
+  
+  pinMode(IN5, OUTPUT);
+  pinMode(IN6, OUTPUT);
+
+  pinMode(IN7, OUTPUT);
+  pinMode(IN8, OUTPUT);
+  pinMode(IN9, OUTPUT);
+  
+  Wire.begin();
+  // Wake up MPU
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x6B);  // Power management
+  Wire.write(0x00);
+  Wire.endTransmission(true);
+
+  // Stel gyroscoop bereik in op ±500 °/s (0x08 in register 0x1B)
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x1B);  // Gyro config register
+  Wire.write(0x08);  // 0x08 voor ±500 °/s
+  Wire.endTransmission(true);
+
+  calculateOffsets();  // Bepaal gyroscoopoffset
+
+  
+  if (simulatie) {
+    Serial.begin(57600);
+    Serial.print("Mz alfa omega theta");  // De legenda
+    if (tijdPerPixel < cyclustijd) Serial.println("___XXXXXX____tijdPerPixel.<.cyclustijd____XXXXXX");
+    else Serial.println();
+  }
+  t_oud = millis();
+  if (simulatie) tijdVoorNwePixelPlot = t_oud;
+  if (not simulatie) gyro();
+  error = sp - theta;
+//  Poolplaatsing();
+  Regelaar();
+  if (simulatie) plot();
+  else motoraansturing();
+
+}
+
+void loop() {
+  t_nw = millis();    // Lees de tijd
+  if (t_nw - t_oud > cyclustijd) {
+    dt = (t_nw - t_oud) * .001;
+    t_oud = t_nw;
+
+    if (simulatie) {
+      theta = theta + omega * dt; // Bereken theta (gebruik omega_oud)
+      omega = omega + alfa * dt; // Bereken omega
+    } else {
+      gyro();      // Gyro meet hoeksnelheid en berekent theta
+    }
+    Regelaar();
+
+    if (simulatie) {
+      if (pixel == pixels) while (true);       // Vanglus. Stop met plotten als scherm vol is
+      if (t_nw > tijdVoorNwePixelPlot) plot(); // Alleen plotten als tijdPerPixel is verlopen
+    }
+    else {
+      motoraansturing();
+    }
+  }
+}
