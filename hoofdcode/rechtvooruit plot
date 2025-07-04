@@ -1,0 +1,65 @@
+import matplotlib.pyplot as plt
+
+# === Stap 1: Lees de data uit data.txt ===
+input_path = r"data.txt"
+
+tijd = []
+hoek = []
+Fvooruit = []
+Fwand = []
+Fhoek = []
+afstand = []
+pwm_links = []
+pwm_rechts = []
+
+with open(input_path, "r") as f:
+    for line in f:
+        line = line.strip()
+        if not line or line.startswith("//"):
+            continue
+        try:
+            # Verwacht: tijd,hoek,Fvooruit,Fwand,Fhoek,afstand,pwm_links,pwm_rechts
+            parts = line.split(",")
+            if len(parts) >= 8:
+                tijd.append(float(parts[0]))
+                hoek.append(float(parts[1]))  # graden
+                Fvooruit.append(float(parts[2]))  # Newton
+                Fwand.append(float(parts[3]))    # Newton
+                Fhoek.append(float(parts[4]))    # Newton
+                afstand.append(float(parts[5]) / 1000.0)  # meter
+                pwm_links.append(float(parts[6]))
+                pwm_rechts.append(float(parts[7]))
+        except Exception as e:
+            print(f"Fout bij regel: {line} ({e})")
+
+# === Stap 2: Plot de data ===
+plt.figure(figsize=(12, 10))
+
+# Subplot 1: Hoek en Afstand
+plt.subplot(3, 1, 1)
+plt.plot(tijd, hoek, label='Hoek (graden)')
+plt.plot(tijd, afstand, label='Afstand (meter)')
+plt.ylabel('Hoek (°) / Afstand (m)')
+plt.title('Hoek (°) en Afstand (m) over tijd')
+plt.legend()
+
+# Subplot 2: Krachten
+plt.subplot(3, 1, 2)
+plt.plot(tijd, Fvooruit, label='Fvooruit (N)')
+plt.plot(tijd, Fwand, label='Fwand (N)')
+plt.plot(tijd, Fhoek, label='Fhoek (N)')
+plt.ylabel('Kracht (N)')
+plt.title('Krachten (N) over tijd')
+plt.legend()
+
+# Subplot 3: PWM
+plt.subplot(3, 1, 3)
+plt.plot(tijd, pwm_links, label='PWM Links')
+plt.plot(tijd, pwm_rechts, label='PWM Rechts')
+plt.xlabel('Tijd (ms)')
+plt.ylabel('PWM (0-255)')
+plt.title('PWM-signalen over tijd')
+plt.legend()
+
+plt.tight_layout()
+plt.show()
